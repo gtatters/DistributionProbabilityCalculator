@@ -22,7 +22,7 @@ chiTail <-
     Y <- c(0, y[these], 0)
     polygon(X, Y, border=border, col=col)
     abline(h=0)
-    axis(1, at = c(0,U), label = c(NA,round(U,4)))
+    axis(1, cex.axis = 1.5)
   }
 
 FTail <-
@@ -39,7 +39,7 @@ FTail <-
     Y <- c(0, y[these], 0)
     polygon(X, Y, border=border, col=col)
     abline(h=0)
-    axis(1, at = c(0,U), label = c(NA,round(U,4)))
+    axis(1, cex.axis = 1.5)
   }
 
 normTail <-
@@ -682,15 +682,24 @@ server <- function(input, output) {
         arr_col  <- "#444444"
         arr_len  <- 0.18            # arrowhead size (inches)
         arr_ang  <- 25
+        lbl_col  <- "#569BBD"       # blue label colour to match threshold lines
+        
+        # Helper to draw an a or b label just below the x-axis at position xpos
+        add_ab_label <- function(xpos, label) {
+          mtext(label, side = 1, at = xpos, line = 2.2,
+                col = lbl_col, font = 2, cex = 1.2)
+        }
         
         if (tail == "lower") {
           abline(v = L, lty = 2, col = line_col, lwd = 1.5)
           arrows(x0 = L, y0 = arrow_y, x1 = L - 0.55 * abs(L), y1 = arrow_y,
                  length = arr_len, angle = arr_ang, col = arr_col, lwd = 1.5)
+          add_ab_label(L, "a")
         } else if (tail == "upper") {
           abline(v = U, lty = 2, col = line_col, lwd = 1.5)
           arrows(x0 = U, y0 = arrow_y, x1 = U + 0.55 * abs(U), y1 = arrow_y,
                  length = arr_len, angle = arr_ang, col = arr_col, lwd = 1.5)
+          add_ab_label(U, "a")
         } else if (tail == "both") {
           abline(v = L, lty = 2, col = line_col, lwd = 1.5)
           abline(v = U, lty = 2, col = line_col, lwd = 1.5)
@@ -698,6 +707,8 @@ server <- function(input, output) {
                  length = arr_len, angle = arr_ang, col = arr_col, lwd = 1.5)
           arrows(x0 = U, y0 = arrow_y, x1 = U + 0.55 * abs(U), y1 = arrow_y,
                  length = arr_len, angle = arr_ang, col = arr_col, lwd = 1.5)
+          add_ab_label(L, "a")
+          add_ab_label(U, "b")
         } else if (tail %in% c("middle", "equal")) {
           abline(v = L, lty = 2, col = line_col, lwd = 1.5)
           abline(v = U, lty = 2, col = line_col, lwd = 1.5)
@@ -706,6 +717,8 @@ server <- function(input, output) {
                  length = arr_len, angle = arr_ang, col = arr_col, lwd = 1.5)
           arrows(x0 = U, y0 = arrow_y, x1 = mid, y1 = arrow_y,
                  length = arr_len, angle = arr_ang, col = arr_col, lwd = 1.5)
+          add_ab_label(L, "a")
+          add_ab_label(U, "b")
         }
       }
       
@@ -809,8 +822,14 @@ server <- function(input, output) {
         }
         
         # Dashed threshold lines only for binomial (no arrows)
-        if (!is.null(L)) abline(v = L, lty = 2, col = "#444444", lwd = 1.5)
-        if (!is.null(U)) abline(v = U, lty = 2, col = "#444444", lwd = 1.5)
+        if (!is.null(L)) {
+          abline(v = L, lty = 2, col = "#444444", lwd = 1.5)
+          mtext("a", side = 1, at = L, line = 2.2, col = "#569BBD", font = 2, cex = 1.2)
+        }
+        if (!is.null(U)) {
+          abline(v = U, lty = 2, col = "#444444", lwd = 1.5)
+          mtext("b", side = 1, at = U, line = 2.2, col = "#569BBD", font = 2, cex = 1.2)
+        }
       }
     }
   })
