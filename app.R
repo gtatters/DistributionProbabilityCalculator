@@ -201,6 +201,24 @@ defaults <- list(
   "upper_bound" = "open"
 )
 
+# Safari-safe plotting ---------------------------------------------------------
+# Draws a base-R plot as a PNG image. Stand-in for renderPlot(), which
+# currently fails in Safari under Shinylive. Use with imageOutput().
+render_base <- function(id, session, draw) {
+  renderImage({
+    cd <- session$clientData
+    w  <- cd[[paste0("output_", id, "_width")]]
+    h  <- cd[[paste0("output_", id, "_height")]]
+    req(w > 0, h > 0)
+    pr <- cd$pixelratio
+    if (is.null(pr)) pr <- 1
+    f <- tempfile(fileext = ".png")
+    png(f, width = w * pr, height = h * pr, res = 72 * pr)
+    tryCatch(draw(), finally = dev.off())
+    list(src = f, contentType = "image/png", width = w, height = h)
+  }, deleteFile = TRUE)
+}
+
 # Define UI --------------------------------------------------------------------
 ui <- pageWithSidebar(
   
@@ -248,7 +266,7 @@ ui <- pageWithSidebar(
   ),
   
   mainPanel(
-    plotOutput("plot"),
+    imageOutput("plot", height = "400px"),
     div(textOutput("area"), align = "center", style = "font-size:150%;"),
     br(),
     uiOutput("interpretation_box")
@@ -256,7 +274,7 @@ ui <- pageWithSidebar(
 )
 
 # Define server function -------------------------------------------------------
-server <- function(input, output) {
+server <- function(input, output, session) {
   output$tail <- renderUI({
     if (input$dist == "rbinom") {
       selectInput(
@@ -298,7 +316,6 @@ server <- function(input, output) {
   output$lower_bound <- renderUI({
     if (input$dist == "rbinom") {
       if (is.null(input$tail)) {
-        shiny:::flushReact()
         return()
       }
       
@@ -350,7 +367,6 @@ server <- function(input, output) {
   output$upper_bound <- renderUI({
     if (input$dist == "rbinom") {
       if (is.null(input$tail)) {
-        shiny:::flushReact()
         return()
       }
       
@@ -387,7 +403,6 @@ server <- function(input, output) {
   
   get_model_text <- reactive({
     if (is.null(input$tail)) {
-      shiny:::flushReact()
       return()
     }
     
@@ -398,7 +413,6 @@ server <- function(input, output) {
     
     if (input$dist == "rbinom" & input$tail != "equal") {
       if (is.null(input$lower_bound)) {
-        shiny:::flushReact()
         return()
       }
       if (input$lower_bound == "closed") {
@@ -407,7 +421,6 @@ server <- function(input, output) {
       }
       if (input$tail %in% c("middle", "both")) {
         if (is.null(input$upper_bound)) {
-          shiny:::flushReact()
           return()
         }
         if (input$upper_bound == "closed") {
@@ -535,7 +548,6 @@ server <- function(input, output) {
         10^round(log(7 * sd / 100, 10))
       }
       if (is.null(input$mu) | is.null(input$sd)) {
-        shiny:::flushReact()
         return()
       }
       mu <- input$mu
@@ -557,12 +569,14 @@ server <- function(input, output) {
       step <- 0.01
     }
     else if (input$dist == "rf") {
+      req(input$df1, input$df2)   # wait until the F df sliders exist
       value <- round(qf(.95, as.numeric(input$df1), as.numeric(input$df2)), digits = 2)
       min <- 0
       max <- round(qf(.995, as.numeric(input$df1), as.numeric(input$df2)) * 1.05, digits = 2)
       step <- 0.01
     }
     else if (input$dist == "rchisq") {
+      req(input$df)               # wait until the df slider exists
       value <- round(qchisq(.95, as.numeric(input$df)), digits = 2)
       min <- 0
       max <- round(qchisq(.995, as.numeric(input$df)), digits = 2)
@@ -570,7 +584,6 @@ server <- function(input, output) {
     }
     else if (input$dist == "rbinom") {
       if (is.null(input$n)) {
-        shiny:::flushReact()
         return()
       }
       value <- round(input$n / 4)
@@ -589,7 +602,6 @@ server <- function(input, output) {
   
   output$b <- renderUI({
     if (is.null(input$tail)) {
-      shiny:::flushReact()
       return()
     }
     
@@ -604,7 +616,6 @@ server <- function(input, output) {
           10^round(log(7 * sd / 100, 10))
         }
         if (is.null(input$mu) | is.null(input$sd)) {
-          shiny:::flushReact()
           return()
         }
         mu <- input$mu
@@ -624,7 +635,6 @@ server <- function(input, output) {
       }
       else if (input$dist == "rbinom") {
         if (is.null(input$n)) {
-          shiny:::flushReact()
           return()
         }
         value <- round(input$n * 3 / 4)
@@ -646,9 +656,8 @@ server <- function(input, output) {
   # Plotting #
   ############
   
-  output$plot <- renderPlot({
+  output$plot <- render_base("plot", session, function() {
     if (is.null(input$tail) | is.null(input$a)) {
-      shiny:::flushReact()
       return()
     }
     
@@ -662,7 +671,6 @@ server <- function(input, output) {
       U <- input$a
     } else if (input$tail %in% c("both", "middle")) {
       if (is.null(input$b)) {
-        shiny:::flushReact()
         return()
       }
       L <- input$a
@@ -731,7 +739,6 @@ server <- function(input, output) {
         }
         if (input$dist == "rnorm") {
           if (is.null(input$mu) | is.null(input$sd)) {
-            shiny:::flushReact()
             return()
           }
           normTail(m = input$mu, s = input$sd, L = L, U = U, M = M, axes = 3, cex.axis = 1.5)
@@ -739,7 +746,6 @@ server <- function(input, output) {
           title(main = "Normal Distribution")
         } else if (input$dist == "rt") {
           if (is.null(input$df)) {
-            shiny:::flushReact()
             return()
           }
           normTail(m = 0, s = 1, df = input$df, L = L, U = U, M = M, axes = 3, cex.axis = 1.5)
@@ -759,7 +765,6 @@ server <- function(input, output) {
         
       } else if (input$dist == "rchisq") {
         if (is.null(input$df)) {
-          shiny:::flushReact()
           return()
         }
         x_max <- round(qchisq(.995, input$df), digits = 2) + 1
@@ -769,7 +774,7 @@ server <- function(input, output) {
         add_threshold_decorations(input$tail, L, U, y_peak)
         
       } else if (input$dist == "rf") {
-        req(U)
+        req(U, input$df1, input$df2)
         FTail(U = U, df_n = input$df1, df_d = input$df2)
         mode_f <- max((input$df1 - 2) / (input$df1) * (input$df2) / (input$df2 + 2), 0.1)
         y_peak <- df(mode_f, input$df1, input$df2)
@@ -778,11 +783,9 @@ server <- function(input, output) {
         
       } else if (input$dist == "rbinom") {
         if (is.null(input$n) | is.null(input$p) | is.null(input$lower_bound)) {
-          shiny:::flushReact()
           return()
         }
         if (input$tail %in% c("both", "middle") & is.null(input$upper_bound)) {
-          shiny:::flushReact()
           return()
         }
         
@@ -840,7 +843,6 @@ server <- function(input, output) {
   
   output$area <- renderText({
     if (is.null(input$tail) | is.null(input$a)) {
-      shiny:::flushReact()
       return()
     }
     
@@ -849,7 +851,6 @@ server <- function(input, output) {
     
     if (input$tail %in% c("both", "middle")) {
       if (is.null(input$b)) {
-        shiny:::flushReact()
         return()
       }
       U <- input$b
@@ -860,35 +861,30 @@ server <- function(input, output) {
     
     if (input$dist == "rnorm") {
       if (is.null(input$mu) | is.null(input$sd)) {
-        shiny:::flushReact()
         return()
       }
       f <- function(x) pnorm(x, input$mu, input$sd)
     }
     else if (input$dist == "rt") {
       if (is.null(input$df)) {
-        shiny:::flushReact()
         return()
       }
       f <- function(x) pt(x, input$df)
     }
     else if (input$dist == "rchisq") {
       if (is.null(input$df)) {
-        shiny:::flushReact()
         return()
       }
       f <- function(x) pchisq(x, input$df)
     }
     else if (input$dist == "rf") {
       if (is.null(input$df1) | is.null(input$df2)) {
-        shiny:::flushReact()
         return()
       }
       f <- function(x) pf(x, input$df1, input$df2)
     }
     else if (input$dist == "rbinom") {
       if (is.null(input$n) | is.null(input$p) | is.null(input$lower_bound)) {
-        shiny:::flushReact()
         return()
       }
       if (input$tail == "equal") {
@@ -901,7 +897,6 @@ server <- function(input, output) {
         if (input$tail %in% c("middle") & input$lower_bound == "closed") L <- L - 1
         if (input$tail %in% c("both", "middle")) {
           if (is.null(input$upper_bound)) {
-            shiny:::flushReact()
             return()
           }
           if (input$tail == "both" & input$upper_bound == "closed") U <- U - 1
