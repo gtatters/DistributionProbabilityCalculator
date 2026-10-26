@@ -42,6 +42,28 @@ FTail <-
     axis(1, cex.axis = 1.5)
   }
 
+# Tukey q (studentized range) curve. Base R has no dtukey(), so the curve
+# is drawn as the slope of ptukey(). 'scale' = sqrt(2) gives the
+# Whitlock & Schluter version of q; scale = 1 gives R's qtukey() version.
+qTail <-
+  function(U=NULL, k=3, df=20, scale=sqrt(2), curveColor=1, border=1, col="#569BBD", detail=300){
+    x_hi <- max(qtukey(.995, k, df) / scale, U) * 1.05
+    x    <- seq(0, x_hi, length.out=detail)
+    Fx   <- ptukey(x * scale, nmeans = k, df = df)
+    xm   <- (x[-1] + x[-detail]) / 2
+    y    <- diff(Fx) / diff(x)
+    plot(xm, y, type='l', xlim=c(0, x_hi), ylim=c(0, max(y)), axes=FALSE, col=curveColor, xlab = "", ylab = "")
+    these <- (xm >= U)
+    if(any(these)){
+      X <- c(xm[these][1], xm[these], rev(xm[these])[1])
+      Y <- c(0, y[these], 0)
+      polygon(X, Y, border=border, col=col)
+    }
+    abline(h=0)
+    axis(1, cex.axis = 1.5)
+    invisible(max(y))
+  }
+
 normTail <-
   function(m=0, s=1, L=NULL, U=NULL, M=NULL, df=1000, curveColor=1, border=1, col='#569BBD', xlim=NULL, ylim=NULL, xlab='', ylab='', digits=2, axes=1, detail=999, xLab=c('number', 'symbol'), cex.axis=1, xAxisIncr=1, ...){
     if(is.null(xlim)[1]){
@@ -235,7 +257,9 @@ ui <- pageWithSidebar(
         "Binomial" = "rbinom",
         "t" = "rt",
         "F" = "rf",
-        "Chi-Squared" = "rchisq"
+        "Chi-Squared" = "rchisq",
+        "Tukey q (multiple comparisons)" = "rqtukey",
+        "Mann-Whitney U" = "rwilcox"
       ),
       selected = "rnorm"
     ),
@@ -246,6 +270,10 @@ ui <- pageWithSidebar(
     uiOutput("df2"),
     uiOutput("n"),
     uiOutput("p"),
+    uiOutput("k"),
+    uiOutput("q_scale"),
+    uiOutput("n1"),
+    uiOutput("n2"),
     
     helpText("Model:"),
     div(textOutput("model"), style = "text-indent:20px;font-size:125%;"),
@@ -287,10 +315,23 @@ server <- function(input, output, session) {
           "Middle" = "middle",
           "Equality" = "equal"
         ),
-        selected = "lower"
+        selected = "upper"
       )
     }
-    else if (input$dist == "rf" | input$dist == "rchisq") {
+    else if (input$dist == "rwilcox") {
+      selectInput(
+        inputId = "tail",
+        label = "Find Area:",
+        choices = c(
+          "Two-tailed P-value" = "twotail",
+          "Lower Tail" = "lower",
+          "Upper Tail" = "upper",
+          "Equality" = "equal"
+        ),
+        selected = "twotail"
+      )
+    }
+    else if (input$dist %in% c("rf", "rchisq", "rqtukey")) {
       selectInput(
         inputId = "tail",
         label = "Find Area:",
@@ -308,12 +349,15 @@ server <- function(input, output, session) {
           "Both Tails" = "both",
           "Middle" = "middle"
         ),
-        selected = "lower"
+        selected = "upper"
       )
     }
   })
   
   output$lower_bound <- renderUI({
+    if (input$dist == "rwilcox") {
+      return(helpText("Like the binomial, U only takes whole-number values. Tail areas here include the value a itself (\u2264 or \u2265), as when calculating a P-value."))
+    }
     if (input$dist == "rbinom") {
       if (is.null(input$tail)) {
         return()
@@ -406,6 +450,19 @@ server <- function(input, output, session) {
       return()
     }
     
+    # Tukey q and Mann-Whitney U have their own symbols
+    if (input$dist == "rqtukey") {
+      return("P(q \u2265 a)")
+    }
+    if (input$dist == "rwilcox") {
+      return(switch(input$tail,
+                    "lower"   = "P(U \u2264 a)",
+                    "upper"   = "P(U \u2265 a)",
+                    "equal"   = "P(U = a)",
+                    "twotail" = "P(U \u2264 low or U \u2265 high)"
+      ))
+    }
+    
     low_less <- "<"
     low_greater <- ">"
     up_less <- "<"
@@ -496,6 +553,14 @@ server <- function(input, output, session) {
                   max = 50
       )
     }
+    else if (input$dist == "rqtukey") {
+      sliderInput("df",
+                  "Error degrees of freedom (N - k)",
+                  value = 20,
+                  min = 2,
+                  max = 100
+      )
+    }
   })
   
   output$df2 <- renderUI({
@@ -537,6 +602,62 @@ server <- function(input, output, session) {
     }
   })
   
+  ##########################
+  # Tukey q distribution   #
+  ##########################
+  
+  output$k <- renderUI({
+    if (input$dist == "rqtukey") {
+      sliderInput("k",
+                  "Number of groups (k)",
+                  value = 3,
+                  min = 2,
+                  max = 10,
+                  step = 1
+      )
+    }
+  })
+  
+  output$q_scale <- renderUI({
+    if (input$dist == "rqtukey") {
+      tagList(
+        checkboxInput("ws_scale",
+                      "Use Whitlock & Schluter's q",
+                      value = TRUE
+        ),
+        helpText("Ticked: matches the q table in Whitlock & Schluter. Unticked: matches R's qtukey() and most other textbooks (those q values are \u221a2 times larger).")
+      )
+    }
+  })
+  
+  ##########################
+  # Mann-Whitney U         #
+  ##########################
+  
+  output$n1 <- renderUI({
+    if (input$dist == "rwilcox") {
+      sliderInput("n1",
+                  "Sample size, group 1 (n1)",
+                  value = 8,
+                  min = 1,
+                  max = 30,
+                  step = 1
+      )
+    }
+  })
+  
+  output$n2 <- renderUI({
+    if (input$dist == "rwilcox") {
+      sliderInput("n2",
+                  "Sample size, group 2 (n2)",
+                  value = 8,
+                  min = 1,
+                  max = 30,
+                  step = 1
+      )
+    }
+  })
+  
   output$a <- renderUI({
     value <- 1
     min <- 0
@@ -554,7 +675,7 @@ server <- function(input, output, session) {
       sd <- input$sd
       if (is.null(mu)) mu <- 0
       if (is.null(sd)) sd <- 1
-      value <- mu - 1.96 * sd
+      value <- mu + 1.96 * sd   # upper 2.5% point, matching the Upper Tail default
       min <- mu - 4 * sd
       max <- mu + 4 * sd
       step <- find_normal_step(sd)
@@ -563,9 +684,10 @@ server <- function(input, output, session) {
       }
     }
     else if (input$dist == "rt") {
-      value <- -1.96
-      min <- -6
-      max <- 6
+      req(input$df)               # wait until the df slider exists
+      value <- round(qt(.975, as.numeric(input$df)), digits = 2)   # upper-tail P = 0.025
+      min <- -max(6, ceiling(value))   # widen the slider when df is tiny (df = 1 gives 12.71)
+      max <-  max(6, ceiling(value))
       step <- 0.01
     }
     else if (input$dist == "rf") {
@@ -582,11 +704,26 @@ server <- function(input, output, session) {
       max <- round(qchisq(.995, as.numeric(input$df)), digits = 2)
       step <- 0.01
     }
+    else if (input$dist == "rqtukey") {
+      req(input$k, input$df, !is.null(input$ws_scale))
+      sc <- if (isTRUE(input$ws_scale)) sqrt(2) else 1
+      value <- round(qtukey(.95, input$k, input$df) / sc, digits = 2)
+      min <- 0
+      max <- round(qtukey(.995, input$k, input$df) / sc * 1.05, digits = 2)
+      step <- 0.01
+    }
+    else if (input$dist == "rwilcox") {
+      req(input$n1, input$n2)
+      value <- min(qwilcox(.975, input$n1, input$n2) + 1, input$n1 * input$n2)   # W&S critical value
+      min <- 0
+      max <- input$n1 * input$n2
+      step <- 1
+    }
     else if (input$dist == "rbinom") {
       if (is.null(input$n)) {
         return()
       }
-      value <- round(input$n / 4)
+      value <- round(input$n * 3 / 4)
       min <- 0
       max <- input$n
       step <- 1
@@ -683,13 +820,43 @@ server <- function(input, output, session) {
       text(0, 0, "Error: Lower bound greater than upper bound.", col = "red", cex = 2)
     } else {
       
+      # Helper: direction arrows, used by every distribution.
+      # Arrow length is a fixed share of the plot width (so it works even when a = 0),
+      # and arrows stop just short of the plot edge so the arrowhead is never cut off.
+      # 'left' and 'right' are the x positions arrows start from (NULL = no arrow).
+      # inward = TRUE draws both arrows pointing toward the middle (for "Middle").
+      add_direction_arrows <- function(left = NULL, right = NULL, y_peak, inward = FALSE) {
+        arrow_y <- y_peak * 0.60    # arrow sits at 60% of curve height
+        usr     <- par("usr")
+        width   <- diff(usr[1:2])
+        len     <- 0.15 * width     # arrow length
+        inset   <- 0.02 * width     # gap kept between arrowhead and plot edge
+        min_len <- 0.04 * width     # skip arrows too short to read
+        draw    <- function(x0, x1) {
+          arrows(x0 = x0, y0 = arrow_y, x1 = x1, y1 = arrow_y,
+                 length = 0.18, angle = 25, col = "#444444", lwd = 1.5)
+        }
+        if (inward) {
+          mid <- (left + right) / 2
+          if (mid - left > min_len) {
+            draw(left, mid)
+            draw(right, mid)
+          }
+        } else {
+          if (!is.null(left)) {
+            x1 <- max(left - len, usr[1] + inset)
+            if (left - x1 > min_len) draw(left, x1)
+          }
+          if (!is.null(right)) {
+            x1 <- min(right + len, usr[2] - inset)
+            if (x1 - right > min_len) draw(right, x1)
+          }
+        }
+      }
+      
       # Helper: add threshold lines and arrows after a continuous distribution is plotted
       add_threshold_decorations <- function(tail, L, U, y_peak) {
-        arrow_y  <- y_peak * 0.60   # arrow sits at 60% of curve height
         line_col <- "#444444"
-        arr_col  <- "#444444"
-        arr_len  <- 0.18            # arrowhead size (inches)
-        arr_ang  <- 25
         lbl_col  <- "#569BBD"       # blue label colour to match threshold lines
         
         # Helper to draw an a or b label just below the x-axis at position xpos
@@ -700,31 +867,22 @@ server <- function(input, output, session) {
         
         if (tail == "lower") {
           abline(v = L, lty = 2, col = line_col, lwd = 1.5)
-          arrows(x0 = L, y0 = arrow_y, x1 = L - 0.55 * abs(L), y1 = arrow_y,
-                 length = arr_len, angle = arr_ang, col = arr_col, lwd = 1.5)
+          add_direction_arrows(left = L, y_peak = y_peak)
           add_ab_label(L, "a")
         } else if (tail == "upper") {
           abline(v = U, lty = 2, col = line_col, lwd = 1.5)
-          arrows(x0 = U, y0 = arrow_y, x1 = U + 0.55 * abs(U), y1 = arrow_y,
-                 length = arr_len, angle = arr_ang, col = arr_col, lwd = 1.5)
+          add_direction_arrows(right = U, y_peak = y_peak)
           add_ab_label(U, "a")
         } else if (tail == "both") {
           abline(v = L, lty = 2, col = line_col, lwd = 1.5)
           abline(v = U, lty = 2, col = line_col, lwd = 1.5)
-          arrows(x0 = L, y0 = arrow_y, x1 = L - 0.55 * abs(L), y1 = arrow_y,
-                 length = arr_len, angle = arr_ang, col = arr_col, lwd = 1.5)
-          arrows(x0 = U, y0 = arrow_y, x1 = U + 0.55 * abs(U), y1 = arrow_y,
-                 length = arr_len, angle = arr_ang, col = arr_col, lwd = 1.5)
+          add_direction_arrows(left = L, right = U, y_peak = y_peak)
           add_ab_label(L, "a")
           add_ab_label(U, "b")
-        } else if (tail %in% c("middle", "equal")) {
+        } else if (tail == "middle") {
           abline(v = L, lty = 2, col = line_col, lwd = 1.5)
           abline(v = U, lty = 2, col = line_col, lwd = 1.5)
-          mid <- (L + U) / 2
-          arrows(x0 = L, y0 = arrow_y, x1 = mid, y1 = arrow_y,
-                 length = arr_len, angle = arr_ang, col = arr_col, lwd = 1.5)
-          arrows(x0 = U, y0 = arrow_y, x1 = mid, y1 = arrow_y,
-                 length = arr_len, angle = arr_ang, col = arr_col, lwd = 1.5)
+          add_direction_arrows(left = L, right = U, y_peak = y_peak, inward = TRUE)
           add_ab_label(L, "a")
           add_ab_label(U, "b")
         }
@@ -781,6 +939,66 @@ server <- function(input, output, session) {
         title(main = "F Distribution")
         add_threshold_decorations(input$tail, L, U, y_peak)
         
+      } else if (input$dist == "rqtukey") {
+        req(input$tail == "upper", input$k, input$df, !is.null(input$ws_scale))
+        sc <- if (isTRUE(input$ws_scale)) sqrt(2) else 1
+        y_peak <- qTail(U = input$a, k = input$k, df = input$df, scale = sc)
+        title(main = "Tukey q Distribution")
+        add_threshold_decorations("upper", NULL, input$a, y_peak)
+        
+      } else if (input$dist == "rwilcox") {
+        req(input$n1, input$n2)
+        N <- input$n1 * input$n2
+        a <- input$a
+        req(a <= N)   # wait for the a slider to catch up when n1 or n2 changes
+        
+        vals <- 0:N
+        d    <- dwilcox(vals, input$n1, input$n2)
+        lo   <- min(a, N - a)
+        hi   <- max(a, N - a)
+        
+        shade <- switch(input$tail,
+                        "lower"   = vals <= a,
+                        "upper"   = vals >= a,
+                        "equal"   = vals == a,
+                        "twotail" = vals <= lo | vals >= hi
+        )
+        req(!is.null(shade))
+        
+        # With many bars, outlines crowd together; use grey fill instead
+        if (N > 100) {
+          unshaded <- "grey85"; brd <- NA
+        } else {
+          unshaded <- NA; brd <- "black"
+        }
+        
+        plot(0, 0,
+             type = "n", xlim = c(-0.5, N + 0.5), ylim = c(0, max(d)),
+             xlab = "", ylab = "", axes = FALSE
+        )
+        axis(1, cex.axis = 1.5)
+        axis(2, cex.axis = 1.5)
+        title(main = "Mann-Whitney U Distribution")
+        rect(vals - 0.5, 0, vals + 0.5, d,
+             col = ifelse(shade, "#569BBD", unshaded), border = brd)
+        
+        abline(v = a, lty = 2, col = "#444444", lwd = 1.5)
+        mtext("a", side = 1, at = a, line = 2.2, col = "#569BBD", font = 2, cex = 1.2)
+        if (input$tail == "twotail" & a != N - a) {
+          # Mirror-image value on the other side of the middle
+          abline(v = N - a, lty = 2, col = "#444444", lwd = 1.5)
+          mtext("a\u2032", side = 1, at = N - a, line = 2.2, col = "#569BBD", font = 2, cex = 1.2)
+        }
+        
+        # Direction arrows (none for Equality: a single bar needs no direction)
+        if (input$tail == "lower") {
+          add_direction_arrows(left = a, y_peak = max(d))
+        } else if (input$tail == "upper") {
+          add_direction_arrows(right = a, y_peak = max(d))
+        } else if (input$tail == "twotail") {
+          add_direction_arrows(left = lo, right = hi, y_peak = max(d))
+        }
+        
       } else if (input$dist == "rbinom") {
         if (is.null(input$n) | is.null(input$p) | is.null(input$lower_bound)) {
           return()
@@ -824,14 +1042,27 @@ server <- function(input, output, session) {
           polygon(p, col = col)
         }
         
-        # Dashed threshold lines only for binomial (no arrows)
+        # Dashed threshold lines for binomial
         if (!is.null(L)) {
           abline(v = L, lty = 2, col = "#444444", lwd = 1.5)
           mtext("a", side = 1, at = L, line = 2.2, col = "#569BBD", font = 2, cex = 1.2)
         }
         if (!is.null(U)) {
           abline(v = U, lty = 2, col = "#444444", lwd = 1.5)
-          mtext("b", side = 1, at = U, line = 2.2, col = "#569BBD", font = 2, cex = 1.2)
+          # Upper tail uses only one threshold, which is 'a' (not 'b')
+          mtext(ifelse(input$tail == "upper", "a", "b"), side = 1, at = U, line = 2.2,
+                col = "#569BBD", font = 2, cex = 1.2)
+        }
+        
+        # Direction arrows (none for Equality: a single bar needs no direction)
+        if (input$tail == "lower") {
+          add_direction_arrows(left = L, y_peak = max(d))
+        } else if (input$tail == "upper") {
+          add_direction_arrows(right = U, y_peak = max(d))
+        } else if (input$tail == "both") {
+          add_direction_arrows(left = L, right = U, y_peak = max(d))
+        } else if (input$tail == "middle") {
+          add_direction_arrows(left = L, right = U, y_peak = max(d), inward = TRUE)
         }
       }
     }
@@ -841,9 +1072,128 @@ server <- function(input, output, session) {
   # Calculations #
   ################
   
+  # Shared calculation for Tukey q and Mann-Whitney U, so the probability,
+  # interpretation and R code always agree.
+  extra_calc <- reactive({
+    req(input$tail, input$a)
+    a   <- input$a
+    pct <- function(v) paste0(round(v * 100, 2), "%")
+    
+    if (input$dist == "rqtukey") {
+      req(input$tail == "upper", input$k, input$df, !is.null(input$ws_scale))
+      k  <- input$k
+      df <- input$df
+      ws <- isTRUE(input$ws_scale)
+      sc <- if (ws) sqrt(2) else 1
+      
+      val    <- ptukey(a * sc, nmeans = k, df = df, lower.tail = FALSE)
+      crit   <- qtukey(.95, nmeans = k, df = df) / sc
+      npairs <- k * (k - 1) / 2
+      
+      if (ws) {
+        r_code <- paste0(
+          "ptukey(", a, " * sqrt(2), nmeans = ", k, ", df = ", df, ", lower.tail = FALSE)\n",
+          "# Whitlock & Schluter's q is R's q divided by sqrt(2),\n",
+          "# so multiply by sqrt(2) before using ptukey().\n",
+          "# 5% critical value: qtukey(0.95, nmeans = ", k, ", df = ", df, ") / sqrt(2)"
+        )
+      } else {
+        r_code <- paste0(
+          "ptukey(", a, ", nmeans = ", k, ", df = ", df, ", lower.tail = FALSE)\n",
+          "# 5% critical value: qtukey(0.95, nmeans = ", k, ", df = ", df, ")"
+        )
+      }
+      
+      interp <- paste0(
+        "If all ", k, " group means were truly equal, there is a ", pct(val),
+        " chance that at least one of the ", npairs, " pairs of means would differ by q = ",
+        a, " or more just by chance (error df = ", df, "). ",
+        "This is the Tukey-Kramer P-value for a pair with q = ", a,
+        ". It is larger than an ordinary t-test P-value because it already accounts for making all ",
+        npairs, " comparisons. For reference, the critical value at \u03b1 = 0.05 is q = ",
+        round(crit, 2), "."
+      )
+      text <- paste0("P(q \u2265 ", a, ") = ", signif(val, 3))
+      
+    } else if (input$dist == "rwilcox") {
+      req(input$n1, input$n2)
+      n1 <- input$n1
+      n2 <- input$n2
+      N  <- n1 * n2
+      req(a <= N)
+      lo <- min(a, N - a)
+      hi <- max(a, N - a)
+      groups <- paste0("n1 = ", n1, ", n2 = ", n2)
+      same   <- "If both groups come from the same population, there is a "
+      
+      if (input$tail == "lower") {
+        val    <- pwilcox(a, n1, n2)
+        r_code <- paste0("pwilcox(", a, ", m = ", n1, ", n = ", n2, ", lower.tail = TRUE)")
+        interp <- paste0(same, pct(val), " chance of getting U = ", a, " or smaller (", groups, ").")
+        text   <- paste0("P(U \u2264 ", a, ") = ", signif(val, 3))
+      } else if (input$tail == "upper") {
+        val    <- pwilcox(a - 1, n1, n2, lower.tail = FALSE)
+        r_code <- paste0("pwilcox(", a - 1, ", m = ", n1, ", n = ", n2, ", lower.tail = FALSE)\n",
+                         "# note: a - 1, because lower.tail = FALSE gives P(U > value), not P(U >= value)")
+        interp <- paste0(same, pct(val), " chance of getting U = ", a, " or larger (", groups, ").")
+        text   <- paste0("P(U \u2265 ", a, ") = ", signif(val, 3))
+      } else if (input$tail == "equal") {
+        val    <- dwilcox(a, n1, n2)
+        r_code <- paste0("dwilcox(", a, ", m = ", n1, ", n = ", n2, ")")
+        interp <- paste0(same, pct(val), " chance of getting exactly U = ", a, " (", groups, ").")
+        text   <- paste0("P(U = ", a, ") = ", signif(val, 3))
+      } else if (input$tail == "twotail") {
+        val    <- min(1, pwilcox(lo, n1, n2) + pwilcox(hi - 1, n1, n2, lower.tail = FALSE))
+        r_code <- paste0(
+          "pwilcox(", lo, ", m = ", n1, ", n = ", n2, ", lower.tail = TRUE) + ",
+          "pwilcox(", hi - 1, ", m = ", n1, ", n = ", n2, ", lower.tail = FALSE)\n",
+          "# equivalent: 2 * pwilcox(", hi - 1, ", m = ", n1, ", n = ", n2, ", lower.tail = FALSE)\n",
+          "# (a P-value can't exceed 1, so cap the result at 1)\n",
+          "# wilcox.test() does all of this for you; it reports U as 'W'\n",
+          "# 5% critical value (as in Whitlock & Schluter's table): qwilcox(0.975, m = ",
+          n1, ", n = ", n2, ") + 1"
+        )
+        
+        # W&S critical value: smallest U with two-tailed P <= 0.05.
+        # R's qwilcox() is one less, because it works with P(U <= value).
+        crit <- qwilcox(.975, n1, n2) + 1
+        if (crit <= N) {
+          crit_text <- paste0(
+            " For reference, the critical value at \u03b1 = 0.05 is U = ", crit,
+            ": if the larger of U1 and U2 is ", crit, " or more, reject the null hypothesis."
+          )
+        } else {
+          crit_text <- paste0(
+            " With samples this small, no value of U can give P \u2264 0.05,",
+            " so the null hypothesis can't be rejected at \u03b1 = 0.05."
+          )
+        }
+        
+        interp <- paste0(
+          same, pct(val), " chance of getting a U at least as far from the middle (",
+          N / 2, ") as ", a, ", in either direction (U \u2264 ", lo, " or U \u2265 ", hi, "; ",
+          groups, "). This is the two-tailed P-value for the Mann-Whitney U test. ",
+          "It doesn't matter whether you enter U1 or U2: they are mirror images (U1 + U2 = n1 \u00d7 n2 = ",
+          N, "), so both give the same P-value.", crit_text
+        )
+        text   <- paste0("P(U \u2264 ", lo, " or U \u2265 ", hi, ") = ", signif(val, 3))
+      } else {
+        req(FALSE)
+      }
+    } else {
+      req(FALSE)
+    }
+    
+    list(val = val, r_code = r_code, interp = interp, text = text)
+  })
+  
   output$area <- renderText({
     if (is.null(input$tail) | is.null(input$a)) {
       return()
+    }
+    
+    if (input$dist %in% c("rqtukey", "rwilcox")) {
+      return(extra_calc()$text)
     }
     
     L <- input$a
@@ -930,8 +1280,50 @@ server <- function(input, output, session) {
   # Interpretation + R code panel  #
   ###################################
   
+  # Builds the grey Interpretation + R code panel
+  make_interp_panel <- function(interp, r_code) {
+    tagList(
+      tags$div(
+        style = paste(
+          "border: 1px solid #d0d0d0;",
+          "border-radius: 6px;",
+          "padding: 14px 18px;",
+          "background-color: #f9f9f9;",
+          "font-size: 95%;"
+        ),
+        tags$p(
+          tags$strong("Interpretation:"),
+          tags$span(interp)
+        ),
+        tags$hr(style = "margin: 8px 0;"),
+        tags$p(
+          tags$strong("R code:"),
+          style = "margin-bottom: 4px;"
+        ),
+        tags$pre(
+          style = paste(
+            "background-color: #f0f0f0;",
+            "border: 1px solid #ccc;",
+            "border-radius: 4px;",
+            "padding: 8px 12px;",
+            "font-size: 90%;",
+            "white-space: pre-wrap;",
+            "word-break: break-word;"
+          ),
+          r_code
+        )
+      )
+    )
+  }
+  
   output$interpretation_box <- renderUI({
     if (is.null(input$tail) | is.null(input$a)) return()
+    
+    # Tukey q and Mann-Whitney U use the shared extra_calc() reactive
+    if (input$dist %in% c("rqtukey", "rwilcox")) {
+      res <- extra_calc()
+      return(make_interp_panel(res$interp, res$r_code))
+    }
     
     # ---- Compute the probability value (mirrors output$area logic) ----
     L <- input$a
@@ -1087,38 +1479,7 @@ server <- function(input, output, session) {
     )
     
     # ---- Render the panel ----
-    tagList(
-      tags$div(
-        style = paste(
-          "border: 1px solid #d0d0d0;",
-          "border-radius: 6px;",
-          "padding: 14px 18px;",
-          "background-color: #f9f9f9;",
-          "font-size: 95%;"
-        ),
-        tags$p(
-          tags$strong("Interpretation:"),
-          tags$span(interp)
-        ),
-        tags$hr(style = "margin: 8px 0;"),
-        tags$p(
-          tags$strong("R code:"),
-          style = "margin-bottom: 4px;"
-        ),
-        tags$pre(
-          style = paste(
-            "background-color: #f0f0f0;",
-            "border: 1px solid #ccc;",
-            "border-radius: 4px;",
-            "padding: 8px 12px;",
-            "font-size: 90%;",
-            "white-space: pre-wrap;",
-            "word-break: break-word;"
-          ),
-          r_code
-        )
-      )
-    )
+    make_interp_panel(interp, r_code)
   })
 }
 
