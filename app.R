@@ -286,6 +286,8 @@ ui <- pageWithSidebar(
     uiOutput("a"),
     uiOutput("b"),
     
+    uiOutput("normal_overlay"),
+    
     br(),
     
     helpText("_____________________"),
@@ -658,6 +660,24 @@ server <- function(input, output, session) {
     }
   })
   
+  ##########################################
+  # Normal approximation (Binomial and U)  #
+  ##########################################
+  
+  # Off by default. isolate() keeps the tick if you switch between
+  # Binomial and Mann-Whitney U, without redrawing the box on every change.
+  output$normal_overlay <- renderUI({
+    if (input$dist %in% c("rbinom", "rwilcox")) {
+      tagList(
+        checkboxInput("show_normal",
+                      "Show normal approximation",
+                      value = isTRUE(isolate(input$show_normal))
+        ),
+        helpText("Adds an orange normal curve with the same mean and standard deviation as the bars. The more closely the bars follow the curve, the better the normal distribution works as a stand-in.")
+      )
+    }
+  })
+  
   output$a <- renderUI({
     value <- 1
     min <- 0
@@ -888,6 +908,19 @@ server <- function(input, output, session) {
         }
       }
       
+      # Helper: normal-approximation overlay for the discrete (bar) distributions.
+      # Draws an orange normal curve with mean 'mu' and SD 's' across the bars,
+      # and labels its mean and SD just under the title.
+      show_norm <- isTRUE(input$show_normal)
+      norm_peak <- function(s) if (show_norm && s > 0) dnorm(0, 0, s) else 0
+      add_normal_overlay <- function(mu, s, x_lo, x_hi) {
+        if (!show_norm || s <= 0) return(invisible())
+        xs <- seq(x_lo, x_hi, length.out = 400)
+        lines(xs, dnorm(xs, mu, s), col = "#E07B39", lwd = 3)
+        mtext(paste0("Normal curve: mean = ", round(mu, 2), ", SD = ", round(s, 2)),
+              side = 3, line = 0.2, col = "#E07B39", cex = 1.1)
+      }
+      
       if (input$dist == "rnorm" | input$dist == "rt") {
         M <- NULL
         if (input$tail == "middle") {
@@ -957,6 +990,10 @@ server <- function(input, output, session) {
         lo   <- min(a, N - a)
         hi   <- max(a, N - a)
         
+        # Mean and SD of U under the null hypothesis (for the normal overlay)
+        mu_u <- N / 2
+        sd_u <- sqrt(input$n1 * input$n2 * (input$n1 + input$n2 + 1) / 12)
+        
         shade <- switch(input$tail,
                         "lower"   = vals <= a,
                         "upper"   = vals >= a,
@@ -973,7 +1010,7 @@ server <- function(input, output, session) {
         }
         
         plot(0, 0,
-             type = "n", xlim = c(-0.5, N + 0.5), ylim = c(0, max(d)),
+             type = "n", xlim = c(-0.5, N + 0.5), ylim = c(0, max(d, norm_peak(sd_u))),
              xlab = "", ylab = "", axes = FALSE
         )
         axis(1, cex.axis = 1.5)
@@ -981,6 +1018,7 @@ server <- function(input, output, session) {
         title(main = "Mann-Whitney U Distribution")
         rect(vals - 0.5, 0, vals + 0.5, d,
              col = ifelse(shade, "#569BBD", unshaded), border = brd)
+        add_normal_overlay(mu_u, sd_u, -0.5, N + 0.5)
         
         abline(v = a, lty = 2, col = "#444444", lwd = 1.5)
         mtext("a", side = 1, at = a, line = 2.2, col = "#569BBD", font = 2, cex = 1.2)
@@ -1008,8 +1046,13 @@ server <- function(input, output, session) {
         }
         
         d <- dbinom(0:input$n, input$n, input$p)
+        
+        # Mean and SD of the binomial (for the normal overlay)
+        mu_b <- input$n * input$p
+        sd_b <- sqrt(input$n * input$p * (1 - input$p))
+        
         plot(0, 0,
-             type = "n", xlim = c(-0.5, input$n + 0.5), ylim = c(0, max(d)),
+             type = "n", xlim = c(-0.5, input$n + 0.5), ylim = c(0, max(d, norm_peak(sd_b))),
              xlab = "", ylab = "", axes = FALSE
         )
         axis(1, cex.axis = 1.5)
@@ -1041,6 +1084,7 @@ server <- function(input, output, session) {
                       ncol = 2, byrow = TRUE)
           polygon(p, col = col)
         }
+        add_normal_overlay(mu_b, sd_b, -0.5, input$n + 0.5)
         
         # Dashed threshold lines for binomial
         if (!is.null(L)) {
